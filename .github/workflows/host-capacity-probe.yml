@@ -1,0 +1,66 @@
+name: CPU host capacity assessment
+run-name: CPU host capacity assessment
+on:
+  workflow_dispatch:
+    inputs:
+      assessment_authorized:
+        description: Authorize one credentials-free CPU host assessment
+        required: true
+        type: boolean
+        default: false
+permissions: {}
+concurrency:
+  group: cpu-host-capacity-assessment
+  cancel-in-progress: false
+jobs:
+  assess:
+    if: ${{ inputs.assessment_authorized && github.run_attempt == 1 }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Read host capacity without private inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I -S -B - <<'PY'
+          import json,os,platform,subprocess
+          from pathlib import Path
+          required=7348420608
+          fields={}
+          for line in Path('/proc/meminfo').read_text().splitlines():
+              key,value=line.split(':',1)
+              if key in {'MemTotal','MemAvailable'}:fields[key]=int(value.split()[0])*1024
+          assert set(fields)=={'MemTotal','MemAvailable'}
+          controllers=Path('/sys/fs/cgroup/cgroup.controllers').read_text().split()
+          systemd=Path('/proc/1/comm').read_text().strip()=='systemd'
+          version=subprocess.run(['/usr/bin/systemctl','--version'],capture_output=True,text=True,timeout=5,check=True).stdout.splitlines()[0]
+          release=Path('/etc/os-release').read_text()
+          rows=[]
+          membership=Path('/proc/self/cgroup').read_text().strip()
+          assert membership.startswith('0::/') and '\n' not in membership
+          group=Path('/sys/fs/cgroup'+membership[3:])
+          ancestry_ok=True
+          for parent in (group,*group.parents):
+              if not parent.is_relative_to('/sys/fs/cgroup'):break
+              if not (parent/'memory.max').exists():continue
+              maximum=(parent/'memory.max').read_text().strip()
+              current=int((parent/'memory.current').read_text())
+              headroom=None if maximum=='max' else int(maximum)-current
+              ancestry_ok=ancestry_ok and (headroom is None or headroom>=required)
+              rows.append({'memory_max':maximum,'memory_current':current,'headroom_bytes':headroom})
+          passed=(fields['MemAvailable']>=required and ancestry_ok and systemd
+                  and len(os.sched_getaffinity(0))>=2 and {'cpu','memory','pids'}<=set(controllers)
+                  and 'ID=ubuntu\n' in release and 'VERSION_ID="24.04"' in release
+                  and platform.machine()=='x86_64')
+          result={'assessment':'READ_ONLY_CAPACITY_ONLY','available_memory_bytes':fields['MemAvailable'],
+                  'total_memory_bytes':fields['MemTotal'],'required_available_memory_bytes':required,
+                  'shortfall_bytes':max(0,required-fields['MemAvailable']),
+                  'affinity_cpus':len(os.sched_getaffinity(0)),'systemd':systemd,'systemd_version':version,
+                  'containing_memory':rows,'capacity_checks_passed':passed,
+                  'production_admission_granted':False,'private_inputs_accessed':False,
+                  'gpu_work':0,'paid_provisioning_authorized':False}
+          text=json.dumps(result,sort_keys=True,indent=2)
+          print(text)
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:stream.write('```json\n'+text+'\n```\n')
+          raise SystemExit(0 if passed else 2)
+          PY
