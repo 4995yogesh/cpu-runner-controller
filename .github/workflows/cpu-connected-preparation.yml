@@ -1,0 +1,245 @@
+name: Connected genuine CPU preparation
+run-name: CPU connected ${{ inputs.operation_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      operation_id:
+        description: Fresh independently reviewed scope; never reuse
+        required: true
+        type: string
+      reviewed_control_commit:
+        description: Exact private derivative commit
+        required: true
+        type: string
+      reviewed_source_registry_sha256:
+        description: Exact private derivative registry digest
+        required: true
+        type: string
+      reviewed_execution_card_sha256:
+        description: Independently reviewed split CPU execution card digest
+        required: true
+        type: string
+      dispatch_authorized:
+        description: Authorize one CPU-only operation with private evidence; zero paid provisioning
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: cpu-connected-preparation
+  cancel-in-progress: false
+jobs:
+  connected-cpu:
+    name: connected-cpu
+    if: ${{ inputs.dispatch_authorized && github.run_attempt == 1 }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CPU_CONTROL_COMMIT: ${{ inputs.reviewed_control_commit }}
+      CPU_SOURCE_REGISTRY_SHA256: ${{ inputs.reviewed_source_registry_sha256 }}
+      CPU_SCOPE_ID: ${{ inputs.operation_id }}
+      CPU_CARD_SHA256: ${{ inputs.reviewed_execution_card_sha256 }}
+      CPU_APP_CLIENT_ID: ${{ vars.CPU_APP_CLIENT_ID }}
+      CPU_APP_INSTALLATION_ID: ${{ vars.CPU_APP_INSTALLATION_ID }}
+      CPU_PRIVATE_REPOSITORY_ID: ${{ vars.CPU_PRIVATE_REPOSITORY_ID }}
+      CPU_APP_BOT_ID: ${{ vars.CPU_APP_BOT_ID }}
+      CPU_REVIEW_ISSUE_NUMBER: ${{ vars.CPU_REVIEW_ISSUE_NUMBER }}
+      CPU_REVIEWER_ID: ${{ vars.CPU_REVIEWER_ID }}
+      CPU_DRIVE_FOLDER_ID: ${{ vars.CPU_DRIVE_FOLDER_ID }}
+      CPU_EVIDENCE_PERMISSIONS_SHA256: ${{ vars.CPU_EVIDENCE_PERMISSIONS_SHA256 }}
+    steps:
+      - name: Authenticate owner authority and launch private CPU controller
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CPU_APP_PRIVATE_KEY: ${{ secrets.CPU_APP_PRIVATE_KEY }}
+          CPU_DRIVE_RCLONE_CONF: ${{ secrets.CPU_DRIVE_RCLONE_CONF }}
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=GH_TOKEN,CPU_APP_PRIVATE_KEY,CPU_DRIVE_RCLONE_CONF,CPU_CONTROL_COMMIT,CPU_SOURCE_REGISTRY_SHA256,CPU_SCOPE_ID,CPU_CARD_SHA256,CPU_APP_CLIENT_ID,CPU_APP_INSTALLATION_ID,CPU_PRIVATE_REPOSITORY_ID,CPU_APP_BOT_ID,CPU_REVIEW_ISSUE_NUMBER,CPU_REVIEWER_ID,CPU_DRIVE_FOLDER_ID,CPU_EVIDENCE_PERMISSIONS_SHA256,GITHUB_REPOSITORY,GITHUB_EVENT_NAME,GITHUB_RUN_ATTEMPT,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,RUNNER_OS,ImageOS,RUNNER_NAME,GITHUB_JOB,ImageVersion,RUNNER_TEMP /usr/bin/python3 -I -S -B - <<'PY'
+          import base64,datetime,hashlib,http.client,json,os,re,resource,shutil,signal,ssl,subprocess,time,uuid
+          from pathlib import Path
+          started=time.monotonic();root=None;private=None;token=None;child=None;code=2
+          root_identity=None;private_identity=None
+          def interrupted(_signal,_frame):raise KeyboardInterrupt()
+          signal.signal(signal.SIGTERM,interrupted)
+          def operation_expired(_signal,_frame):
+              marker=root/'controller-start.json' if root is not None else None
+              if marker is not None and marker.exists() and time.monotonic()-started<7200:
+                  handoff=json.loads(marker.read_bytes())
+                  if handoff['started_monotonic']-started<220:
+                      signal.setitimer(signal.ITIMER_REAL,max(.000001,7200-(time.monotonic()-started)));return
+              raise KeyboardInterrupt()
+          signal.signal(signal.SIGALRM,operation_expired);signal.setitimer(signal.ITIMER_REAL,220)
+          def need(ok):
+              if not ok:raise ValueError('CPU_BOOTSTRAP_BLOCKED')
+          def request(method,path,credential,body=None,raw=False):
+              conn=http.client.HTTPSConnection('api.github.com',timeout=5,context=ssl.create_default_context())
+              try:
+                  headers={'Authorization':'Bearer '+credential,'User-Agent':'cpu-private-bootstrap','X-GitHub-Api-Version':'2026-03-10',
+                           'Accept':'application/vnd.github.raw+json' if raw else 'application/vnd.github+json'}
+                  if body is not None:headers['Content-Type']='application/json'
+                  conn.request(method,path,body=None if body is None else json.dumps(body).encode(),headers=headers)
+                  response=conn.getresponse();value=response.read(4194305)
+                  need(response.status=={'GET':200,'POST':201,'DELETE':204}[method] and len(value)<=4194304)
+                  return value if raw or method=='DELETE' else json.loads(value)
+              finally:conn.close()
+          try:
+              need(os.getuid()==0 and os.environ['GITHUB_REPOSITORY']=='4995yogesh/cpu-runner-controller'
+                   and os.environ['GITHUB_EVENT_NAME']=='workflow_dispatch' and os.environ['GITHUB_RUN_ATTEMPT']=='1'
+                   and os.environ['GITHUB_SHA']==os.environ['GITHUB_WORKFLOW_SHA'] and os.environ['RUNNER_OS']=='Linux'
+                   and os.environ['ImageOS']=='ubuntu24' and os.environ['GITHUB_JOB']=='connected-cpu')
+              for name,size in [('CPU_CONTROL_COMMIT',40),('CPU_SOURCE_REGISTRY_SHA256',64),('CPU_CARD_SHA256',64),('CPU_SCOPE_ID',32)]:
+                  need(re.fullmatch('[0-9a-f]{'+str(size)+'}',os.environ[name]))
+              resource.setrlimit(resource.RLIMIT_CORE,(0,0));resource.setrlimit(resource.RLIMIT_FSIZE,(536870912,536870912))
+              storage=Path('/var/lib')
+              need(all(not p.is_symlink() and p.stat().st_uid==0 and not p.stat().st_mode&0o022 for p in (storage,*storage.parents)))
+              root=storage/('cpu-public-bootstrap-'+os.environ['GITHUB_RUN_ID']+'-'+uuid.uuid4().hex[:12]);root.mkdir(mode=0o700)
+              root_identity=(root.stat().st_dev,root.stat().st_ino)
+              key=root/'app.pem';key.write_text(os.environ.pop('CPU_APP_PRIVATE_KEY'));key.chmod(0o400)
+              need(0<key.stat().st_size<=16384)
+              b64=lambda value:base64.urlsafe_b64encode(value).rstrip(b'=')
+              stamp=int(time.time());signing=b'.'.join([b64(b'{"alg":"RS256","typ":"JWT"}'),
+                  b64(json.dumps({'iat':stamp-60,'exp':stamp+540,'iss':os.environ['CPU_APP_CLIENT_ID']}).encode())])
+              signature=subprocess.run(['/usr/bin/openssl','dgst','-sha256','-sign',str(key)],input=signing,capture_output=True,timeout=5,check=True).stdout
+              jwt=(signing+b'.'+b64(signature)).decode();permissions={'contents':'read','issues':'write','metadata':'read'}
+              repository_id=int(os.environ['CPU_PRIVATE_REPOSITORY_ID']);installation_id=int(os.environ['CPU_APP_INSTALLATION_ID'])
+              need(repository_id==1401402576 and int(os.environ['CPU_REVIEWER_ID'])==183433787
+                   and int(os.environ['CPU_REVIEW_ISSUE_NUMBER'])==1)
+              minted=request('POST',f'/app/installations/{installation_id}/access_tokens',jwt,{'repository_ids':[repository_id],'permissions':permissions})
+              token=minted.get('token')
+              need(isinstance(token,str) and 0<len(token)<=16384)
+              need(isinstance(minted.get('permissions'),dict) and {'metadata':'read',**minted['permissions']}==permissions)
+              expiry=datetime.datetime.fromisoformat(minted['expires_at'].replace('Z','+00:00'))
+              need(expiry.tzinfo is not None and 120<(expiry-datetime.datetime.now(datetime.timezone.utc)).total_seconds()<=3660)
+              need(minted.get('repository_selection','all') in {'selected','all'})
+              def private_rows(rows):
+                  return isinstance(rows,list) and len(rows)==1 and isinstance(rows[0],dict) and rows[0].get('id')==repository_id and rows[0].get('full_name')=='4995yogesh/Phase3-cpu-probe-staging' and rows[0].get('private') is True
+              if 'repositories' in minted:need(private_rows(minted['repositories']))
+              actual=request('GET','/installation/repositories?per_page=100&page=1',token)
+              need(actual.get('total_count')==1 and private_rows(actual.get('repositories')))
+              public_token=os.environ['GH_TOKEN'];repo='4995yogesh/Phase3-cpu-probe-staging'
+              public=request('GET','/repos/4995yogesh/cpu-runner-controller',public_token)
+              need(public['private'] is False and public['full_name']=='4995yogesh/cpu-runner-controller'
+                   and public['id']==1408565081)
+              run_path='/repos/4995yogesh/cpu-runner-controller/actions/runs/'+os.environ['GITHUB_RUN_ID']
+              observation_deadline=min(started+220,time.monotonic()+10)
+              for observation in range(3):
+                  run=request('GET',run_path,public_token)
+                  need(run['repository']['id']==1408565081 and run['repository']['full_name']=='4995yogesh/cpu-runner-controller' and run['repository']['private'] is False)
+                  need(str(run['id'])==os.environ['GITHUB_RUN_ID'] and run['head_sha']==os.environ['GITHUB_SHA'])
+                  need(run['event']=='workflow_dispatch' and run['run_attempt']==1)
+                  need(run['actor']['id']==run['triggering_actor']['id']==183433787)
+                  need(run['path'].split('@',1)[0]=='.github/workflows/cpu-connected-preparation.yml')
+                  need(run['display_title']=='CPU connected '+os.environ['CPU_SCOPE_ID'])
+                  need(time.monotonic()<=observation_deadline)
+                  if run['status']=='in_progress':break
+                  need(run['status']=='queued' and run.get('conclusion') is None and observation<2)
+                  need(time.monotonic()+0.25<observation_deadline);time.sleep(0.25)
+              need(run['status']=='in_progress')
+              expected={'execution_repository':'4995yogesh/cpu-runner-controller','execution_commit':os.environ['GITHUB_SHA'],
+                  'control_repository':repo,'control_commit':os.environ['CPU_CONTROL_COMMIT'],'review_repository':repo,
+                  'registry_sha256':os.environ['CPU_SOURCE_REGISTRY_SHA256'],'scope_id':os.environ['CPU_SCOPE_ID'],
+                  'card_sha256':os.environ['CPU_CARD_SHA256'],'research_commit':'3bc31049ea53d9672bd1bcb45f4a5759487e2c4f',
+                  'approved':True,'test_evidence':False,'paid_spend_ceiling_inr':0}
+              replay=[]
+              for page in range(1,21):
+                  previous=request('GET',f'/repos/4995yogesh/cpu-runner-controller/actions/workflows/{run["workflow_id"]}/runs?event=workflow_dispatch&per_page=100&page={page}',public_token)['workflow_runs']
+                  replay.extend(r for r in previous if r.get('display_title')==run['display_title'])
+                  if len(previous)<100:break
+              else:raise ValueError('CPU_BOOTSTRAP_BLOCKED')
+              need(len(replay)==1 and str(replay[0]['id'])==os.environ['GITHUB_RUN_ID'] and replay[0]['run_attempt']==1)
+              issue=int(os.environ['CPU_REVIEW_ISSUE_NUMBER']);reviewer=int(os.environ['CPU_REVIEWER_ID']);found=[]
+              issue_record=request('GET',f'/repos/{repo}/issues/{issue}',token)
+              need(issue_record.get('state')=='open' and 'pull_request' not in issue_record and issue_record['user']['id']==reviewer)
+              for page in range(1,21):
+                  rows=request('GET',f'/repos/{repo}/issues/{issue}/comments?per_page=100&page={page}',token)
+                  for row in rows:
+                      body=row.get('body','')
+                      if not body.startswith('CPU_PUBLIC_RUNNER_INITIAL_V1\n') or os.environ['CPU_SCOPE_ID'] not in body:continue
+                      need(row['user']['id']==reviewer and row['user']['type']=='User' and row['author_association']=='OWNER'
+                           and row['created_at']==row['updated_at'] and json.loads(body.split('\n',1)[1])==expected)
+                      age=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(row['created_at'].replace('Z','+00:00'))).total_seconds()
+                      need(0<=age<=3600);found.append(row['id'])
+                  if len(rows)<100:break
+              else:raise ValueError('CPU_BOOTSTRAP_BLOCKED')
+              need(len(found)==1)
+              commit=request('GET',f'/repos/{repo}/git/commits/'+os.environ['CPU_CONTROL_COMMIT'],token)
+              tree=request('GET',f'/repos/{repo}/git/trees/'+commit['tree']['sha']+'?recursive=1',token)
+              need(commit['sha']==os.environ['CPU_CONTROL_COMMIT'] and tree['truncated'] is False)
+              def blob(path):
+                  entries=[r for r in tree['tree'] if r['path']==path];need(len(entries)==1 and entries[0]['mode']=='100644')
+                  return request('GET',f'/repos/{repo}/git/blobs/'+entries[0]['sha'],token,raw=True)
+              raw=blob('operations/public_runner_runtime/source-registry.json')
+              need(hashlib.sha256(raw).hexdigest()==os.environ['CPU_SOURCE_REGISTRY_SHA256']);registry=json.loads(raw)
+              program=blob('operations/public_runner_runtime/launch.py');wanted=registry['files']['launch.py']
+              need(wanted=={'bytes':len(program),'sha256':hashlib.sha256(program).hexdigest()})
+              launch=root/'launch.py';launch.write_bytes(program);launch.chmod(0o400)
+              fetch_token=root/'fetch-token';fetch_token.write_text(token);fetch_token.chmod(0o400)
+              private=Path(os.environ['RUNNER_TEMP'])/('cpu-private-'+os.environ['GITHUB_RUN_ID']+'-1')
+              need(not private.exists() and not private.is_symlink());private.mkdir(mode=0o700)
+              private_identity=(private.stat().st_dev,private.stat().st_ino)
+              incoming=private/'incoming.conf';incoming.write_text(os.environ.pop('CPU_DRIVE_RCLONE_CONF'));incoming.chmod(0o600)
+              need(0<incoming.stat().st_size<=16384);uid=int(os.environ['SUDO_UID']);need(uid>=1000)
+              os.chown(private,uid,-1);os.chown(incoming,uid,-1)
+              account={**expected,'initial_monotonic':started,'initial_owner_authenticated':True,
+                  'app_client_id':os.environ['CPU_APP_CLIENT_ID'],'installation_id':installation_id,'private_repository_id':repository_id,
+                  'bot_user_id':int(os.environ['CPU_APP_BOT_ID']),'review_issue':issue,'reviewer_id':reviewer,
+                  'drive_folder_id':os.environ['CPU_DRIVE_FOLDER_ID'],'drive_permissions_sha256':os.environ['CPU_EVIDENCE_PERMISSIONS_SHA256'],
+                  'private_credential_root':str(private),'app_key':str(key),'bootstrap_token_file':str(fetch_token)}
+              account_path=root/'account.json';account_path.write_text(json.dumps(account));account_path.chmod(0o400)
+              need(time.monotonic()-started<220)
+              # Private launcher captures all fetched-controller output itself.
+              child=subprocess.Popen(['/usr/bin/python3','-I','-S','-B',str(launch),str(account_path)],env=dict(os.environ))
+              while child.poll() is None:
+                  if not (root/'controller-start.json').exists():need(time.monotonic()-started<220)
+                  time.sleep(.05)
+              code=child.returncode
+          except BaseException:
+              if child is not None and child.poll() is None:
+                  child.terminate()
+                  try:child.wait(timeout=min(240,max(1,7200-(time.monotonic()-started))))
+                  except Exception:child.kill()
+              code=2
+              print('{"status":"CPU_PATH_BLOCKED","production_admission_granted":false,"gpu_work":0,"paid_provisioning_authorized":false}')
+          finally:
+              # Revocation failure cannot skip local credential disposal.
+              # A missing fetch-token after launcher execution means that the
+              # launcher already revoked this bootstrap token successfully.
+              handled=child is not None and root is not None and not (root/'fetch-token').exists()
+              if token and not handled:
+                  try:request('DELETE','/installation/token',token)
+                  except Exception:code=2
+              if private_identity is not None and private and private.exists():
+                  try:
+                      need(not private.is_symlink() and (private.stat().st_dev,private.stat().st_ino)==private_identity)
+                      need(shutil.rmtree.avoids_symlink_attacks);shutil.rmtree(private)
+                  except Exception:code=2
+              if root_identity is not None and root and root.exists():
+                  try:need(not root.is_symlink() and (root.stat().st_dev,root.stat().st_ino)==root_identity)
+                  except Exception:code=2;root=None
+              if root_identity is not None and root and root.exists():
+                  for name in ['app.pem','fetch-token','account.json','askpass.py']:
+                      try:(root/name).unlink(missing_ok=True)
+                      except Exception:code=2
+              os.environ.pop('CPU_APP_PRIVATE_KEY',None);os.environ.pop('CPU_DRIVE_RCLONE_CONF',None)
+              token=None
+              # A separate process checks actual local absence after disposal.
+              # It emits only a fixed status, never paths, identities or bytes.
+              if root_identity is not None and root is not None and private_identity is not None:
+                  check="import json,sys;from pathlib import Path;root=Path(sys.argv[1]);private=Path(sys.argv[2]);paths=[root/n for n in ['app.pem','fetch-token','account.json','askpass.py']]+[private];p=root/'snapshot-path.json';paths+=([Path(json.loads(p.read_text())['path'])/'private-evidence-worker'] if p.exists() else []);sys.exit(0 if all(not p.exists() and not p.is_symlink() for p in paths) else 2)"
+                  try:
+                      observed=subprocess.run(['/usr/bin/python3','-I','-S','-B','-c',check,str(root),str(private)],
+                          env={'PATH':'/usr/bin:/bin','LANG':'C.UTF-8'},capture_output=True,
+                          timeout=min(5,max(.001,7200-(time.monotonic()-started))))
+                      need(observed.returncode==0)
+                      print('{"status":"CPU_LOCAL_CREDENTIAL_DISPOSAL_COMPLETE","production_admission_granted":false,"gpu_work":0,"paid_provisioning_authorized":false}')
+                  except Exception:code=2
+              if code==0 and root is not None:
+                  try:need(shutil.rmtree.avoids_symlink_attacks);shutil.rmtree(root)
+                  except Exception:code=2
+              signal.setitimer(signal.ITIMER_REAL,0)
+          raise SystemExit(code)
+          PY
