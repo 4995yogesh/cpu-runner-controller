@@ -1,4 +1,4 @@
-name: Connected genuine CPU preparation
+name: Unattended genuine CPU preparation
 run-name: CPU connected ${{ inputs.operation_id }}
 on:
   workflow_dispatch:
@@ -17,6 +17,10 @@ on:
         type: string
       reviewed_execution_card_sha256:
         description: Independently reviewed split CPU execution card digest
+        required: true
+        type: string
+      reviewed_unattended_policy_sha256:
+        description: Exact CPU_UNATTENDED_V1 verifier policy digest
         required: true
         type: string
       dispatch_authorized:
@@ -41,6 +45,7 @@ jobs:
       CPU_SOURCE_REGISTRY_SHA256: ${{ inputs.reviewed_source_registry_sha256 }}
       CPU_SCOPE_ID: ${{ inputs.operation_id }}
       CPU_CARD_SHA256: ${{ inputs.reviewed_execution_card_sha256 }}
+      CPU_UNATTENDED_POLICY_SHA256: ${{ inputs.reviewed_unattended_policy_sha256 }}
       CPU_APP_CLIENT_ID: ${{ vars.CPU_APP_CLIENT_ID }}
       CPU_APP_INSTALLATION_ID: ${{ vars.CPU_APP_INSTALLATION_ID }}
       CPU_PRIVATE_REPOSITORY_ID: ${{ vars.CPU_PRIVATE_REPOSITORY_ID }}
@@ -58,7 +63,7 @@ jobs:
           CPU_DRIVE_RCLONE_CONF: ${{ secrets.CPU_DRIVE_RCLONE_CONF }}
         run: |
           set -euo pipefail
-          sudo --preserve-env=GH_TOKEN,CPU_APP_PRIVATE_KEY,CPU_DRIVE_RCLONE_CONF,CPU_CONTROL_COMMIT,CPU_SOURCE_REGISTRY_SHA256,CPU_SCOPE_ID,CPU_CARD_SHA256,CPU_APP_CLIENT_ID,CPU_APP_INSTALLATION_ID,CPU_PRIVATE_REPOSITORY_ID,CPU_APP_BOT_ID,CPU_REVIEW_ISSUE_NUMBER,CPU_REVIEWER_ID,CPU_DRIVE_FOLDER_ID,CPU_EVIDENCE_PERMISSIONS_SHA256,GITHUB_REPOSITORY,GITHUB_EVENT_NAME,GITHUB_RUN_ATTEMPT,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,RUNNER_OS,ImageOS,RUNNER_NAME,GITHUB_JOB,ImageVersion,RUNNER_TEMP /usr/bin/python3 -I -S -B - <<'PY'
+          sudo --preserve-env=GH_TOKEN,CPU_APP_PRIVATE_KEY,CPU_DRIVE_RCLONE_CONF,CPU_CONTROL_COMMIT,CPU_SOURCE_REGISTRY_SHA256,CPU_SCOPE_ID,CPU_CARD_SHA256,CPU_UNATTENDED_POLICY_SHA256,CPU_APP_CLIENT_ID,CPU_APP_INSTALLATION_ID,CPU_PRIVATE_REPOSITORY_ID,CPU_APP_BOT_ID,CPU_REVIEW_ISSUE_NUMBER,CPU_REVIEWER_ID,CPU_DRIVE_FOLDER_ID,CPU_EVIDENCE_PERMISSIONS_SHA256,GITHUB_REPOSITORY,GITHUB_EVENT_NAME,GITHUB_RUN_ATTEMPT,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,RUNNER_OS,ImageOS,RUNNER_NAME,GITHUB_JOB,ImageVersion,RUNNER_TEMP /usr/bin/python3 -I -S -B - <<'PY'
           import base64,datetime,hashlib,http.client,json,os,re,resource,shutil,signal,ssl,subprocess,time,uuid
           from pathlib import Path
           started=time.monotonic();root=None;private=None;token=None;child=None;code=2
@@ -91,7 +96,7 @@ jobs:
                    and os.environ['GITHUB_EVENT_NAME']=='workflow_dispatch' and os.environ['GITHUB_RUN_ATTEMPT']=='1'
                    and os.environ['GITHUB_SHA']==os.environ['GITHUB_WORKFLOW_SHA'] and os.environ['RUNNER_OS']=='Linux'
                    and os.environ['ImageOS']=='ubuntu24' and os.environ['GITHUB_JOB']=='connected-cpu')
-              for name,size in [('CPU_CONTROL_COMMIT',40),('CPU_SOURCE_REGISTRY_SHA256',64),('CPU_CARD_SHA256',64),('CPU_SCOPE_ID',32)]:
+              for name,size in [('CPU_CONTROL_COMMIT',40),('CPU_SOURCE_REGISTRY_SHA256',64),('CPU_CARD_SHA256',64),('CPU_UNATTENDED_POLICY_SHA256',64),('CPU_SCOPE_ID',32)]:
                   need(re.fullmatch('[0-9a-f]{'+str(size)+'}',os.environ[name]))
               resource.setrlimit(resource.RLIMIT_CORE,(0,0));resource.setrlimit(resource.RLIMIT_FSIZE,(536870912,536870912))
               storage=Path('/var/lib')
@@ -143,7 +148,8 @@ jobs:
                   'control_repository':repo,'control_commit':os.environ['CPU_CONTROL_COMMIT'],'review_repository':repo,
                   'registry_sha256':os.environ['CPU_SOURCE_REGISTRY_SHA256'],'scope_id':os.environ['CPU_SCOPE_ID'],
                   'card_sha256':os.environ['CPU_CARD_SHA256'],'research_commit':'3bc31049ea53d9672bd1bcb45f4a5759487e2c4f',
-                  'approved':True,'test_evidence':False,'paid_spend_ceiling_inr':0}
+                  'approved':True,'test_evidence':False,'paid_spend_ceiling_inr':0,
+                  'unattended_policy_version':'CPU_UNATTENDED_V1','unattended_policy_sha256':os.environ['CPU_UNATTENDED_POLICY_SHA256']}
               replay=[]
               for page in range(1,21):
                   previous=request('GET',f'/repos/4995yogesh/cpu-runner-controller/actions/workflows/{run["workflow_id"]}/runs?event=workflow_dispatch&per_page=100&page={page}',public_token)['workflow_runs']
@@ -158,7 +164,7 @@ jobs:
                   rows=request('GET',f'/repos/{repo}/issues/{issue}/comments?per_page=100&page={page}',token)
                   for row in rows:
                       body=row.get('body','')
-                      if not body.startswith('CPU_PUBLIC_RUNNER_INITIAL_V1\n') or os.environ['CPU_SCOPE_ID'] not in body:continue
+                      if not body.startswith('CPU_PUBLIC_RUNNER_UNATTENDED_INITIAL_V1\n') or os.environ['CPU_SCOPE_ID'] not in body:continue
                       need(row['user']['id']==reviewer and row['user']['type']=='User' and row['author_association']=='OWNER'
                            and row['created_at']==row['updated_at'] and json.loads(body.split('\n',1)[1])==expected)
                       age=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(row['created_at'].replace('Z','+00:00'))).total_seconds()
