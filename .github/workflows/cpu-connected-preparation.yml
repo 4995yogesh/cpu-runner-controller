@@ -20,7 +20,7 @@ on:
         required: true
         type: string
       reviewed_unattended_policy_sha256:
-        description: Exact CPU_STARTUP_DIAGNOSTIC_V1 verifier policy digest
+        description: Exact CPU_COMPLETE_STARTUP_COMPARISON_V1 verifier policy digest
         required: true
         type: string
       dispatch_authorized:
@@ -147,9 +147,9 @@ jobs:
               expected={'execution_repository':'4995yogesh/cpu-runner-controller','execution_commit':os.environ['GITHUB_SHA'],
                   'control_repository':repo,'control_commit':os.environ['CPU_CONTROL_COMMIT'],'review_repository':repo,
                   'registry_sha256':os.environ['CPU_SOURCE_REGISTRY_SHA256'],'scope_id':os.environ['CPU_SCOPE_ID'],
-                  'card_sha256':os.environ['CPU_CARD_SHA256'],'research_commit':'5a42b13880273b228496dcb81bb9ac38110fab5e',
+                  'card_sha256':os.environ['CPU_CARD_SHA256'],'research_commit':'b26fde1a2cea47a9340762a7cbe1aef81635a73a',
                   'approved':True,'test_evidence':False,'paid_spend_ceiling_inr':0,
-                  'unattended_policy_version':'CPU_STARTUP_DIAGNOSTIC_V1','unattended_policy_sha256':os.environ['CPU_UNATTENDED_POLICY_SHA256']}
+                  'unattended_policy_version':'CPU_COMPLETE_STARTUP_COMPARISON_V1','unattended_policy_sha256':os.environ['CPU_UNATTENDED_POLICY_SHA256']}
               replay=[]
               for page in range(1,21):
                   previous=request('GET',f'/repos/4995yogesh/cpu-runner-controller/actions/workflows/{run["workflow_id"]}/runs?event=workflow_dispatch&per_page=100&page={page}',public_token)['workflow_runs']
@@ -164,7 +164,7 @@ jobs:
                   rows=request('GET',f'/repos/{repo}/issues/{issue}/comments?per_page=100&page={page}',token)
                   for row in rows:
                       body=row.get('body','')
-                      if not body.startswith('CPU_PUBLIC_RUNNER_STARTUP_DIAGNOSTIC_INITIAL_V1\n') or os.environ['CPU_SCOPE_ID'] not in body:continue
+                      if not body.startswith('CPU_PUBLIC_RUNNER_COMPLETE_STARTUP_INITIAL_V1\n') or os.environ['CPU_SCOPE_ID'] not in body:continue
                       need(row['user']['id']==reviewer and row['user']['type']=='User' and row['author_association']=='OWNER'
                            and row['created_at']==row['updated_at'] and json.loads(body.split('\n',1)[1])==expected)
                       age=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(row['created_at'].replace('Z','+00:00'))).total_seconds()
