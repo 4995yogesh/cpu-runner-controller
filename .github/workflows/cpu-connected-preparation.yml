@@ -1,4 +1,4 @@
-name: Unattended genuine CPU preparation
+name: Unattended CPU startup diagnostic
 run-name: CPU connected ${{ inputs.operation_id }}
 on:
   workflow_dispatch:
