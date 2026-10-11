@@ -147,7 +147,7 @@ jobs:
               expected={'execution_repository':'4995yogesh/cpu-runner-controller','execution_commit':os.environ['GITHUB_SHA'],
                   'control_repository':repo,'control_commit':os.environ['CPU_CONTROL_COMMIT'],'review_repository':repo,
                   'registry_sha256':os.environ['CPU_SOURCE_REGISTRY_SHA256'],'scope_id':os.environ['CPU_SCOPE_ID'],
-                  'card_sha256':os.environ['CPU_CARD_SHA256'],'research_commit':'b26fde1a2cea47a9340762a7cbe1aef81635a73a',
+                  'card_sha256':os.environ['CPU_CARD_SHA256'],'research_commit':'9df4ee948a9c82c8a6199fb83f7fdacca66cf7fc',
                   'approved':True,'test_evidence':False,'paid_spend_ceiling_inr':0,
                   'unattended_policy_version':'CPU_COMPLETE_STARTUP_COMPARISON_V1','unattended_policy_sha256':os.environ['CPU_UNATTENDED_POLICY_SHA256']}
               replay=[]
