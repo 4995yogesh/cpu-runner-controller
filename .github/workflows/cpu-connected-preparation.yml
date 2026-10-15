@@ -89,11 +89,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GPU_HOST_ROLE_KEY: ${{ secrets[format('VAST_{0}_API_KEY', inputs.gpu_role)] }}
+          GPU_SSH_PRIVATE_KEY: ${{ inputs.gpu_role == 'CONTROLLER' && secrets.GPU_SSH_PRIVATE_KEY || '' }}
           CPU_APP_PRIVATE_KEY: ${{ secrets.CPU_APP_PRIVATE_KEY }}
           CPU_DRIVE_RCLONE_CONF: ${{ secrets.CPU_DRIVE_RCLONE_CONF }}
         run: |
           set -euo pipefail
-          sudo --preserve-env=GPU_HOST_ROLE,GPU_HOST_PACKET_COMMIT,GPU_HOST_PACKET_SHA256,GPU_HOST_ROLE_KEY,GITHUB_ACTOR_ID,GH_TOKEN,CPU_APP_PRIVATE_KEY,CPU_DRIVE_RCLONE_CONF,CPU_CONTROL_COMMIT,CPU_SOURCE_REGISTRY_SHA256,CPU_SCOPE_ID,CPU_CARD_SHA256,CPU_UNATTENDED_POLICY_SHA256,CPU_UNATTENDED_POLICY_VERSION,CPU_APP_CLIENT_ID,CPU_APP_INSTALLATION_ID,CPU_PRIVATE_REPOSITORY_ID,CPU_APP_BOT_ID,CPU_REVIEW_ISSUE_NUMBER,CPU_REVIEWER_ID,CPU_DRIVE_FOLDER_ID,CPU_EVIDENCE_PERMISSIONS_SHA256,GITHUB_REPOSITORY,GITHUB_EVENT_NAME,GITHUB_RUN_ATTEMPT,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,RUNNER_OS,ImageOS,RUNNER_NAME,GITHUB_JOB,ImageVersion,RUNNER_TEMP /usr/bin/python3 -I -S -B - <<'PY'
+          sudo --preserve-env=GPU_SSH_PRIVATE_KEY,GPU_HOST_ROLE,GPU_HOST_PACKET_COMMIT,GPU_HOST_PACKET_SHA256,GPU_HOST_ROLE_KEY,GITHUB_ACTOR_ID,GH_TOKEN,CPU_APP_PRIVATE_KEY,CPU_DRIVE_RCLONE_CONF,CPU_CONTROL_COMMIT,CPU_SOURCE_REGISTRY_SHA256,CPU_SCOPE_ID,CPU_CARD_SHA256,CPU_UNATTENDED_POLICY_SHA256,CPU_UNATTENDED_POLICY_VERSION,CPU_APP_CLIENT_ID,CPU_APP_INSTALLATION_ID,CPU_PRIVATE_REPOSITORY_ID,CPU_APP_BOT_ID,CPU_REVIEW_ISSUE_NUMBER,CPU_REVIEWER_ID,CPU_DRIVE_FOLDER_ID,CPU_EVIDENCE_PERMISSIONS_SHA256,GITHUB_REPOSITORY,GITHUB_EVENT_NAME,GITHUB_RUN_ATTEMPT,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,RUNNER_OS,ImageOS,RUNNER_NAME,GITHUB_JOB,ImageVersion,RUNNER_TEMP /usr/bin/python3 -I -S -B - <<'PY'
           import base64,datetime,hashlib,http.client,json,os,re,resource,shutil,signal,ssl,subprocess,time,uuid
           from pathlib import Path
           started=time.monotonic();root=None;private=None;token=None;child=None;code=2
@@ -269,6 +270,13 @@ jobs:
                   fd=os.open(role_key,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o400)
                   with os.fdopen(fd,'wb') as out:out.write(secret.encode());out.flush();os.fsync(out.fileno())
                   secret=None
+                  ssh_secret=os.environ.pop('GPU_SSH_PRIVATE_KEY','')
+                  if role=='controller' and 'precreation_pipeline' in recipe:
+                      if not ssh_secret:print('{"status":"GPU_SSH_IDENTITY_MISSING","secret_name":"GPU_SSH_PRIVATE_KEY","paid_provisioning_authorized":false}')
+                      need(0<len(ssh_secret.encode())<=16384)
+                      fd=os.open(root/'gpu-ssh.key',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o400)
+                      with os.fdopen(fd,'wb') as out:out.write(ssh_secret.encode());out.flush();os.fsync(out.fileno())
+                  ssh_secret=None
                   account['gpu_host']={'packet':str(packet_path),'packet_sha256':os.environ['GPU_HOST_PACKET_SHA256'],
                       'role':role,'key':str(role_key)}
               account_path=root/'account.json';account_path.write_text(json.dumps(account));account_path.chmod(0o400)
@@ -303,15 +311,19 @@ jobs:
                   try:need(not root.is_symlink() and (root.stat().st_dev,root.stat().st_ino)==root_identity)
                   except Exception:code=2;root=None
               if root_identity is not None and root and root.exists():
-                  for name in ['app.pem','fetch-token','account.json','askpass.py','vast-controller.key','vast-watchdog.key','lifecycle-installation.json']:
+                  for name in ['app.pem','fetch-token','account.json','askpass.py','vast-controller.key','vast-watchdog.key','lifecycle-installation.json','gpu-ssh.key']:
                       try:(root/name).unlink(missing_ok=True)
                       except Exception:code=2
-              os.environ.pop('CPU_APP_PRIVATE_KEY',None);os.environ.pop('CPU_DRIVE_RCLONE_CONF',None);os.environ.pop('GPU_HOST_ROLE_KEY',None)
+                  snapshot=root/'precreation-worker'
+                  if snapshot.exists():
+                      try:need(not snapshot.is_symlink() and shutil.rmtree.avoids_symlink_attacks);shutil.rmtree(snapshot)
+                      except Exception:code=2
+              os.environ.pop('CPU_APP_PRIVATE_KEY',None);os.environ.pop('CPU_DRIVE_RCLONE_CONF',None);os.environ.pop('GPU_HOST_ROLE_KEY',None);os.environ.pop('GPU_SSH_PRIVATE_KEY',None)
               token=None
               # A separate process checks actual local absence after disposal.
               # It emits only a fixed status, never paths, identities or bytes.
               if root_identity is not None and root is not None and private_identity is not None:
-                  check="import json,sys;from pathlib import Path;root=Path(sys.argv[1]);private=Path(sys.argv[2]);paths=[root/n for n in ['app.pem','fetch-token','account.json','askpass.py','vast-controller.key','vast-watchdog.key','lifecycle-installation.json']]+[private];p=root/'snapshot-path.json';paths+=([Path(json.loads(p.read_text())['path'])/'private-evidence-worker'] if p.exists() else []);sys.exit(0 if all(not p.exists() and not p.is_symlink() for p in paths) else 2)"
+                  check="import json,sys;from pathlib import Path;root=Path(sys.argv[1]);private=Path(sys.argv[2]);paths=[root/n for n in ['app.pem','fetch-token','account.json','askpass.py','vast-controller.key','vast-watchdog.key','lifecycle-installation.json','gpu-ssh.key','precreation-worker']]+[private];p=root/'snapshot-path.json';paths+=([Path(json.loads(p.read_text())['path'])/'private-evidence-worker'] if p.exists() else []);sys.exit(0 if all(not p.exists() and not p.is_symlink() for p in paths) else 2)"
                   try:
                       observed=subprocess.run(['/usr/bin/python3','-I','-S','-B','-c',check,str(root),str(private)],
                           env={'PATH':'/usr/bin:/bin','LANG':'C.UTF-8'},capture_output=True,
