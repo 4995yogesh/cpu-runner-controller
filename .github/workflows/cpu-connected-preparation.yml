@@ -29,7 +29,7 @@ on:
         type: choice
         options:
           - CPU_UNATTENDED_FULL_PREPARATION_V1
-          - CPU_ROOT_CONTEXT_DIAGNOSTIC_V1
+          - CPU_ROOT_CONTEXT_DIAGNOSTIC_V2
       dispatch_authorized:
         description: Authorize one CPU-only operation with private evidence; zero paid provisioning
         required: true
@@ -153,7 +153,7 @@ jobs:
                   need(time.monotonic()+0.25<observation_deadline);time.sleep(0.25)
               need(run['status']=='in_progress')
               policies={'CPU_UNATTENDED_FULL_PREPARATION_V1':'CPU_PUBLIC_RUNNER_FULL_PREPARATION_INITIAL_V1',
-                  'CPU_ROOT_CONTEXT_DIAGNOSTIC_V1':'CPU_PUBLIC_RUNNER_ROOT_CONTEXT_INITIAL_V1'}
+                  'CPU_ROOT_CONTEXT_DIAGNOSTIC_V2':'CPU_PUBLIC_RUNNER_ROOT_CONTEXT_INITIAL_V2'}
               version=os.environ['CPU_UNATTENDED_POLICY_VERSION'];need(version in policies)
               prefix=policies[version]
               expected={'execution_repository':'4995yogesh/cpu-runner-controller','execution_commit':os.environ['GITHUB_SHA'],
