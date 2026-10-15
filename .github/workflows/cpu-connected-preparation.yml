@@ -1,4 +1,4 @@
-name: Unattended CPU preparation and root diagnostic
+name: Protected CPU admission and separately authorized GPU lifecycle
 run-name: CPU connected ${{ inputs.operation_id }}
 on:
   workflow_dispatch:
@@ -30,8 +30,26 @@ on:
         options:
           - CPU_UNATTENDED_FULL_PREPARATION_V1
           - CPU_ROOT_CONTEXT_DIAGNOSTIC_V2
+          - CPU_GPU_HOST_TECHNICAL_ADMISSION_V1
+      gpu_role:
+        description: NONE for CPU; exact separate lifecycle role otherwise
+        required: true
+        type: choice
+        default: NONE
+        options:
+          - NONE
+          - CONTROLLER
+          - WATCHDOG
+      reviewed_gpu_packet_commit:
+        description: Private review commit containing this technical scope packet
+        required: false
+        type: string
+      reviewed_gpu_packet_sha256:
+        description: Exact private packet bytes; no credential values
+        required: false
+        type: string
       dispatch_authorized:
-        description: Authorize one CPU-only operation with private evidence; zero paid provisioning
+        description: One exact initial authority; technical CPU card alone never authorizes paid work
         required: true
         type: boolean
         default: false
@@ -39,7 +57,7 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: cpu-connected-preparation
+  group: cpu-connected-${{ inputs.gpu_role == 'NONE' && 'preparation' || inputs.gpu_role }}
   cancel-in-progress: false
 jobs:
   connected-cpu:
@@ -48,6 +66,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
+      GPU_HOST_ROLE: ${{ inputs.gpu_role }}
+      GPU_HOST_PACKET_COMMIT: ${{ inputs.reviewed_gpu_packet_commit }}
+      GPU_HOST_PACKET_SHA256: ${{ inputs.reviewed_gpu_packet_sha256 }}
       CPU_CONTROL_COMMIT: ${{ inputs.reviewed_control_commit }}
       CPU_SOURCE_REGISTRY_SHA256: ${{ inputs.reviewed_source_registry_sha256 }}
       CPU_SCOPE_ID: ${{ inputs.operation_id }}
@@ -67,11 +88,12 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GPU_HOST_ROLE_KEY: ${{ secrets[format('VAST_{0}_API_KEY', inputs.gpu_role)] }}
           CPU_APP_PRIVATE_KEY: ${{ secrets.CPU_APP_PRIVATE_KEY }}
           CPU_DRIVE_RCLONE_CONF: ${{ secrets.CPU_DRIVE_RCLONE_CONF }}
         run: |
           set -euo pipefail
-          sudo --preserve-env=GH_TOKEN,CPU_APP_PRIVATE_KEY,CPU_DRIVE_RCLONE_CONF,CPU_CONTROL_COMMIT,CPU_SOURCE_REGISTRY_SHA256,CPU_SCOPE_ID,CPU_CARD_SHA256,CPU_UNATTENDED_POLICY_SHA256,CPU_UNATTENDED_POLICY_VERSION,CPU_APP_CLIENT_ID,CPU_APP_INSTALLATION_ID,CPU_PRIVATE_REPOSITORY_ID,CPU_APP_BOT_ID,CPU_REVIEW_ISSUE_NUMBER,CPU_REVIEWER_ID,CPU_DRIVE_FOLDER_ID,CPU_EVIDENCE_PERMISSIONS_SHA256,GITHUB_REPOSITORY,GITHUB_EVENT_NAME,GITHUB_RUN_ATTEMPT,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,RUNNER_OS,ImageOS,RUNNER_NAME,GITHUB_JOB,ImageVersion,RUNNER_TEMP /usr/bin/python3 -I -S -B - <<'PY'
+          sudo --preserve-env=GPU_HOST_ROLE,GPU_HOST_PACKET_COMMIT,GPU_HOST_PACKET_SHA256,GPU_HOST_ROLE_KEY,GITHUB_ACTOR_ID,GH_TOKEN,CPU_APP_PRIVATE_KEY,CPU_DRIVE_RCLONE_CONF,CPU_CONTROL_COMMIT,CPU_SOURCE_REGISTRY_SHA256,CPU_SCOPE_ID,CPU_CARD_SHA256,CPU_UNATTENDED_POLICY_SHA256,CPU_UNATTENDED_POLICY_VERSION,CPU_APP_CLIENT_ID,CPU_APP_INSTALLATION_ID,CPU_PRIVATE_REPOSITORY_ID,CPU_APP_BOT_ID,CPU_REVIEW_ISSUE_NUMBER,CPU_REVIEWER_ID,CPU_DRIVE_FOLDER_ID,CPU_EVIDENCE_PERMISSIONS_SHA256,GITHUB_REPOSITORY,GITHUB_EVENT_NAME,GITHUB_RUN_ATTEMPT,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,RUNNER_OS,ImageOS,RUNNER_NAME,GITHUB_JOB,ImageVersion,RUNNER_TEMP /usr/bin/python3 -I -S -B - <<'PY'
           import base64,datetime,hashlib,http.client,json,os,re,resource,shutil,signal,ssl,subprocess,time,uuid
           from pathlib import Path
           started=time.monotonic();root=None;private=None;token=None;child=None;code=2
@@ -153,7 +175,8 @@ jobs:
                   need(time.monotonic()+0.25<observation_deadline);time.sleep(0.25)
               need(run['status']=='in_progress')
               policies={'CPU_UNATTENDED_FULL_PREPARATION_V1':'CPU_PUBLIC_RUNNER_FULL_PREPARATION_INITIAL_V1',
-                  'CPU_ROOT_CONTEXT_DIAGNOSTIC_V2':'CPU_PUBLIC_RUNNER_ROOT_CONTEXT_INITIAL_V2'}
+                  'CPU_ROOT_CONTEXT_DIAGNOSTIC_V2':'CPU_PUBLIC_RUNNER_ROOT_CONTEXT_INITIAL_V2',
+                  'CPU_GPU_HOST_TECHNICAL_ADMISSION_V1':'GPU_CREATION_ARMING_INITIAL_V1'}
               version=os.environ['CPU_UNATTENDED_POLICY_VERSION'];need(version in policies)
               prefix=policies[version]
               expected={'execution_repository':'4995yogesh/cpu-runner-controller','execution_commit':os.environ['GITHUB_SHA'],
@@ -169,6 +192,37 @@ jobs:
                   if len(previous)<100:break
               else:raise ValueError('CPU_BOOTSTRAP_BLOCKED')
               need(len(replay)==1 and str(replay[0]['id'])==os.environ['GITHUB_RUN_ID'] and replay[0]['run_attempt']==1)
+              cpu_expected=dict(expected);gpu_packet=None
+              role=os.environ['GPU_HOST_ROLE'].lower()
+              if version=='CPU_GPU_HOST_TECHNICAL_ADMISSION_V1':
+                  need(role in {'controller','watchdog'})
+                  for field,size in [('GPU_HOST_PACKET_COMMIT',40),('GPU_HOST_PACKET_SHA256',64)]:
+                      need(re.fullmatch('[0-9a-f]{'+str(size)+'}',os.environ[field]))
+                  review=request('GET',f'/repos/{repo}/git/commits/'+os.environ['GPU_HOST_PACKET_COMMIT'],token)
+                  nodes=request('GET',f'/repos/{repo}/git/trees/'+review['tree']['sha']+'?recursive=1',token)
+                  need(review['sha']==os.environ['GPU_HOST_PACKET_COMMIT'] and nodes['truncated'] is False)
+                  name='operations/gpu_launch_packets/'+os.environ['CPU_SCOPE_ID']+'.json'
+                  matches=[n for n in nodes['tree'] if n['path']==name and n['mode']=='100644' and n['type']=='blob']
+                  need(len(matches)==1)
+                  packet_raw=request('GET',f'/repos/{repo}/git/blobs/'+matches[0]['sha'],token,raw=True)
+                  need(0<len(packet_raw)<=262144 and hashlib.sha256(packet_raw).hexdigest()==os.environ['GPU_HOST_PACKET_SHA256'])
+                  gpu_packet=json.loads(packet_raw);recipe=gpu_packet['recipe']
+                  need(set(gpu_packet)=={'schema','version','role','recipe','prepared','native_graph'} and gpu_packet['schema']==1
+                       and gpu_packet['version']=='GPU_HOSTED_SESSION_CONNECTION_V1' and gpu_packet['role']==role)
+                  def digest(value):return hashlib.sha256((json.dumps(value,sort_keys=True,indent=2,allow_nan=False)+'\n').encode()).hexdigest()
+                  scope=recipe['execution_scope_id'];need(re.fullmatch('[0-9a-f]{32}',scope))
+                  need(hashlib.sha256(('GPU_HOSTED_SESSION_CONNECTION_V1:'+scope+':'+role).encode()).hexdigest()[:32]==os.environ['CPU_SCOPE_ID'])
+                  need(recipe['native_private_control']['code_commit']==os.environ['CPU_CONTROL_COMMIT']
+                       and recipe['native_private_control']['registry_sha256']==os.environ['CPU_SOURCE_REGISTRY_SHA256']
+                       and recipe['hosted_watchdog']['execution_commit']==os.environ['GITHUB_SHA']
+                       and recipe['hosted_cpu_admission']['cards_sha256'][role]==os.environ['CPU_CARD_SHA256'])
+                  cap=recipe['session_cap_inr'];need(type(cap) in (int,float) and 0<cap<=500)
+                  expected={'approved':True,'recipe_sha256':digest(recipe),
+                      'operation_authority_sha256':recipe['hosted_watchdog']['operation_authority_sha256'],
+                      'scope_id':scope,'attempt':1,'paid_spend_ceiling_inr':cap,'test_evidence':False}
+              else:
+                  need(role=='none' and not os.environ.get('GPU_HOST_PACKET_COMMIT') and not os.environ.get('GPU_HOST_PACKET_SHA256'))
+                  need(not os.environ.pop('GPU_HOST_ROLE_KEY',''))
               issue=int(os.environ['CPU_REVIEW_ISSUE_NUMBER']);reviewer=int(os.environ['CPU_REVIEWER_ID']);found=[]
               issue_record=request('GET',f'/repos/{repo}/issues/{issue}',token)
               need(issue_record.get('state')=='open' and 'pull_request' not in issue_record and issue_record['user']['id']==reviewer)
@@ -176,7 +230,7 @@ jobs:
                   rows=request('GET',f'/repos/{repo}/issues/{issue}/comments?per_page=100&page={page}',token)
                   for row in rows:
                       body=row.get('body','')
-                      if not body.startswith(prefix+'\n') or os.environ['CPU_SCOPE_ID'] not in body:continue
+                      if not body.startswith(prefix+'\n') or expected['scope_id'] not in body:continue
                       need(row['user']['id']==reviewer and row['user']['type']=='User' and row['author_association']=='OWNER'
                            and row['created_at']==row['updated_at'] and json.loads(body.split('\n',1)[1])==expected)
                       age=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(row['created_at'].replace('Z','+00:00'))).total_seconds()
@@ -202,11 +256,21 @@ jobs:
               incoming=private/'incoming.conf';incoming.write_text(os.environ.pop('CPU_DRIVE_RCLONE_CONF'));incoming.chmod(0o600)
               need(0<incoming.stat().st_size<=16384);uid=int(os.environ['SUDO_UID']);need(uid>=1000)
               os.chown(private,uid,-1);os.chown(incoming,uid,-1)
-              account={**expected,'initial_monotonic':started,'initial_owner_authenticated':True,
+              account={**cpu_expected,'initial_monotonic':started,'initial_owner_authenticated':True,
                   'app_client_id':os.environ['CPU_APP_CLIENT_ID'],'installation_id':installation_id,'private_repository_id':repository_id,
                   'bot_user_id':int(os.environ['CPU_APP_BOT_ID']),'review_issue':issue,'reviewer_id':reviewer,
                   'drive_folder_id':os.environ['CPU_DRIVE_FOLDER_ID'],'drive_permissions_sha256':os.environ['CPU_EVIDENCE_PERMISSIONS_SHA256'],
                   'private_credential_root':str(private),'app_key':str(key),'bootstrap_token_file':str(fetch_token)}
+              if gpu_packet is not None:
+                  packet_path=root/'gpu-host-packet.json';packet_path.write_bytes(packet_raw);packet_path.chmod(0o400)
+                  secret=os.environ.pop('GPU_HOST_ROLE_KEY','')
+                  need(isinstance(secret,str) and 0<len(secret.encode())<=16384 and '\n' not in secret and '\r' not in secret)
+                  role_key=root/('vast-'+role+'.key')
+                  fd=os.open(role_key,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o400)
+                  with os.fdopen(fd,'wb') as out:out.write(secret.encode());out.flush();os.fsync(out.fileno())
+                  secret=None
+                  account['gpu_host']={'packet':str(packet_path),'packet_sha256':os.environ['GPU_HOST_PACKET_SHA256'],
+                      'role':role,'key':str(role_key)}
               account_path=root/'account.json';account_path.write_text(json.dumps(account));account_path.chmod(0o400)
               need(time.monotonic()-started<220)
               # Private launcher captures all fetched-controller output itself.
@@ -239,15 +303,15 @@ jobs:
                   try:need(not root.is_symlink() and (root.stat().st_dev,root.stat().st_ino)==root_identity)
                   except Exception:code=2;root=None
               if root_identity is not None and root and root.exists():
-                  for name in ['app.pem','fetch-token','account.json','askpass.py']:
+                  for name in ['app.pem','fetch-token','account.json','askpass.py','vast-controller.key','vast-watchdog.key','lifecycle-installation.json']:
                       try:(root/name).unlink(missing_ok=True)
                       except Exception:code=2
-              os.environ.pop('CPU_APP_PRIVATE_KEY',None);os.environ.pop('CPU_DRIVE_RCLONE_CONF',None)
+              os.environ.pop('CPU_APP_PRIVATE_KEY',None);os.environ.pop('CPU_DRIVE_RCLONE_CONF',None);os.environ.pop('GPU_HOST_ROLE_KEY',None)
               token=None
               # A separate process checks actual local absence after disposal.
               # It emits only a fixed status, never paths, identities or bytes.
               if root_identity is not None and root is not None and private_identity is not None:
-                  check="import json,sys;from pathlib import Path;root=Path(sys.argv[1]);private=Path(sys.argv[2]);paths=[root/n for n in ['app.pem','fetch-token','account.json','askpass.py']]+[private];p=root/'snapshot-path.json';paths+=([Path(json.loads(p.read_text())['path'])/'private-evidence-worker'] if p.exists() else []);sys.exit(0 if all(not p.exists() and not p.is_symlink() for p in paths) else 2)"
+                  check="import json,sys;from pathlib import Path;root=Path(sys.argv[1]);private=Path(sys.argv[2]);paths=[root/n for n in ['app.pem','fetch-token','account.json','askpass.py','vast-controller.key','vast-watchdog.key','lifecycle-installation.json']]+[private];p=root/'snapshot-path.json';paths+=([Path(json.loads(p.read_text())['path'])/'private-evidence-worker'] if p.exists() else []);sys.exit(0 if all(not p.exists() and not p.is_symlink() for p in paths) else 2)"
                   try:
                       observed=subprocess.run(['/usr/bin/python3','-I','-S','-B','-c',check,str(root),str(private)],
                           env={'PATH':'/usr/bin:/bin','LANG':'C.UTF-8'},capture_output=True,
