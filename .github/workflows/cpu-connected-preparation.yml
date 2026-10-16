@@ -289,6 +289,20 @@ jobs:
                   expected={'approved':True,'recipe_sha256':digest(recipe),
                       'operation_authority_sha256':recipe['hosted_watchdog']['operation_authority_sha256'],
                       'scope_id':scope,'attempt':1,'paid_spend_ceiling_inr':cap,'test_evidence':False}
+                  if 'guest_runtime_materialization' in recipe:
+                      preparation=recipe['guest_runtime_materialization']
+                      need(recipe.get('guest_runtime_materialization_authorized') is True
+                          and preparation.get('version')=='VM_PINNED_VENDOR_MATERIALIZER_V1')
+                      expected['runtime_materialization_review']={'policy_sha256':digest(preparation),
+                          'preparer_file_cap_bytes':preparation['preparer_file_cap_bytes'],
+                          'model_worker_file_cap_bytes':536870912,'large_vendor_members':preparation['large_vendor_members'],
+                          'root_cpu_seconds':30,'root_address_space_bytes':268435456,
+                          'session_seconds':900,'new_paid_authority':False}
+                  if 'python_runtime_projection'in recipe:
+                      python_policy=recipe['python_runtime_projection']
+                      expected['python_runtime_projection_review']={'policy_sha256':digest(python_policy),
+                          'archive_sha256':python_policy['archive_sha256'],'prefix':python_policy['prefix'],
+                          'file_cap_bytes':536870912,'interpreter_execution':False,'runtime_admission_granted':False}
               else:
                   need(role=='none' and not os.environ.get('GPU_HOST_PACKET_COMMIT') and not os.environ.get('GPU_HOST_PACKET_SHA256'))
                   need(not os.environ.pop('GPU_HOST_ROLE_KEY',''))
