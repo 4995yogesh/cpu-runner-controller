@@ -303,6 +303,11 @@ jobs:
                       expected['python_runtime_projection_review']={'policy_sha256':digest(python_policy),
                           'archive_sha256':python_policy['archive_sha256'],'prefix':python_policy['prefix'],
                           'file_cap_bytes':536870912,'interpreter_execution':False,'runtime_admission_granted':False}
+                  if 'guest_transfer'in recipe:
+                      preparation=recipe['guest_transfer']
+                      expected['guest_preparation_review']={'plan_sha256':digest(preparation),'maximum_guest_seconds':335,
+                          'maximum_session_seconds':900,'maximum_job_seconds':7200,'shutdown_reserve_seconds':75,
+                          'credential_forwarding':False,'qualification_admitted':False,'additional_paid_authority':False}
               else:
                   need(role=='none' and not os.environ.get('GPU_HOST_PACKET_COMMIT') and not os.environ.get('GPU_HOST_PACKET_SHA256'))
                   need(not os.environ.pop('GPU_HOST_ROLE_KEY',''))
