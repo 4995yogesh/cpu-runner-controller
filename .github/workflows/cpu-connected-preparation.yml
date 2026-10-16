@@ -85,20 +85,24 @@ jobs:
       CPU_EVIDENCE_PERMISSIONS_SHA256: ${{ vars.CPU_EVIDENCE_PERMISSIONS_SHA256 }}
     steps:
       - name: Authenticate owner authority and launch private CPU controller
+        id: connected
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GPU_HOST_ROLE_KEY: ${{ secrets[format('VAST_{0}_API_KEY', inputs.gpu_role)] }}
+          GPU_GUARD_AUTH_SEED: ${{ secrets.GPU_GUARD_AUTH_SEED }}
+          GPU_GUARD_DEPLOY_TOKEN: ${{ inputs.gpu_role == 'CONTROLLER' && secrets.CLOUDFLARE_WATCHDOG_DEPLOY_TOKEN || '' }}
+          GPU_GUARD_PROVIDER_KEY: ${{ inputs.gpu_role == 'CONTROLLER' && secrets.VAST_WATCHDOG_API_KEY || '' }}
           GPU_SSH_PRIVATE_KEY: ${{ inputs.gpu_role == 'CONTROLLER' && secrets.GPU_SSH_PRIVATE_KEY || '' }}
           CPU_APP_PRIVATE_KEY: ${{ secrets.CPU_APP_PRIVATE_KEY }}
           CPU_DRIVE_RCLONE_CONF: ${{ secrets.CPU_DRIVE_RCLONE_CONF }}
         run: |
           set -euo pipefail
-          sudo --preserve-env=GPU_SSH_PRIVATE_KEY,GPU_HOST_ROLE,GPU_HOST_PACKET_COMMIT,GPU_HOST_PACKET_SHA256,GPU_HOST_ROLE_KEY,GITHUB_ACTOR_ID,GH_TOKEN,CPU_APP_PRIVATE_KEY,CPU_DRIVE_RCLONE_CONF,CPU_CONTROL_COMMIT,CPU_SOURCE_REGISTRY_SHA256,CPU_SCOPE_ID,CPU_CARD_SHA256,CPU_UNATTENDED_POLICY_SHA256,CPU_UNATTENDED_POLICY_VERSION,CPU_APP_CLIENT_ID,CPU_APP_INSTALLATION_ID,CPU_PRIVATE_REPOSITORY_ID,CPU_APP_BOT_ID,CPU_REVIEW_ISSUE_NUMBER,CPU_REVIEWER_ID,CPU_DRIVE_FOLDER_ID,CPU_EVIDENCE_PERMISSIONS_SHA256,GITHUB_REPOSITORY,GITHUB_EVENT_NAME,GITHUB_RUN_ATTEMPT,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,RUNNER_OS,ImageOS,RUNNER_NAME,GITHUB_JOB,ImageVersion,RUNNER_TEMP /usr/bin/python3 -I -S -B - <<'PY'
-          import base64,datetime,hashlib,http.client,json,os,re,resource,shutil,signal,ssl,subprocess,time,uuid
+          sudo --preserve-env=GITHUB_OUTPUT,GPU_GUARD_AUTH_SEED,GPU_GUARD_DEPLOY_TOKEN,GPU_GUARD_PROVIDER_KEY,GPU_SSH_PRIVATE_KEY,GPU_HOST_ROLE,GPU_HOST_PACKET_COMMIT,GPU_HOST_PACKET_SHA256,GPU_HOST_ROLE_KEY,GITHUB_ACTOR_ID,GH_TOKEN,CPU_APP_PRIVATE_KEY,CPU_DRIVE_RCLONE_CONF,CPU_CONTROL_COMMIT,CPU_SOURCE_REGISTRY_SHA256,CPU_SCOPE_ID,CPU_CARD_SHA256,CPU_UNATTENDED_POLICY_SHA256,CPU_UNATTENDED_POLICY_VERSION,CPU_APP_CLIENT_ID,CPU_APP_INSTALLATION_ID,CPU_PRIVATE_REPOSITORY_ID,CPU_APP_BOT_ID,CPU_REVIEW_ISSUE_NUMBER,CPU_REVIEWER_ID,CPU_DRIVE_FOLDER_ID,CPU_EVIDENCE_PERMISSIONS_SHA256,GITHUB_REPOSITORY,GITHUB_EVENT_NAME,GITHUB_RUN_ATTEMPT,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,RUNNER_OS,ImageOS,RUNNER_NAME,GITHUB_JOB,ImageVersion,RUNNER_TEMP /usr/bin/python3 -I -S -B - <<'PY'
+          import base64,datetime,hashlib,http.client,json,os,re,resource,shutil,signal,ssl,stat,subprocess,time,uuid
           from pathlib import Path
           started=time.monotonic();root=None;private=None;token=None;child=None;code=2
-          root_identity=None;private_identity=None
+          root_identity=None;private_identity=None;final_app_verified=False;final_files_verified=False
           def interrupted(_signal,_frame):raise KeyboardInterrupt()
           signal.signal(signal.SIGTERM,interrupted)
           def operation_expired(_signal,_frame):
@@ -111,6 +115,70 @@ jobs:
           signal.signal(signal.SIGALRM,operation_expired);signal.setitimer(signal.ITIMER_REAL,220)
           def need(ok):
               if not ok:raise ValueError('CPU_BOOTSTRAP_BLOCKED')
+          def publish_disposal_projection():
+              # Native output is an existing runner-owned file, never an
+              # arbitrary root write or a private evidence/credential channel.
+              output=Path(os.environ['GITHUB_OUTPUT']);temporary=Path(os.environ['RUNNER_TEMP'])
+              need(temporary.is_absolute() and output.is_absolute() and '..' not in output.parts
+                  and output.parent==temporary/'_runner_file_commands'
+                  and re.fullmatch('set_output_[0-9a-f-]{36}',output.name))
+              need(all(not p.is_symlink() for p in (output,*output.parents)))
+              fd=os.open(output,os.O_WRONLY|os.O_APPEND|os.O_NOFOLLOW)
+              try:
+                  info=os.fstat(fd)
+                  need(stat.S_ISREG(info.st_mode) and info.st_nlink==1 and info.st_uid==int(os.environ['SUDO_UID'])
+                      and info.st_size<=4096 and time.monotonic()<started+7200)
+                  payload=('app_revoked='+str(final_app_verified).lower()+'\nfiles_disposed='+str(final_files_verified).lower()+'\n').encode()
+                  need(os.write(fd,payload)==len(payload));os.fsync(fd)
+              finally:os.close(fd)
+          def final_token_observation(root):
+              def observed(name):
+                  path=root/name;before=path.lstat()
+                  need(stat.S_ISREG(before.st_mode) and before.st_uid==0 and before.st_nlink==1
+                      and stat.S_IMODE(before.st_mode)==0o444 and before.st_size<=4096)
+                  with os.fdopen(os.open(path,os.O_RDONLY|os.O_NOFOLLOW),'rb') as stream:
+                      held=os.fstat(stream.fileno());raw=stream.read(4097);after=os.fstat(stream.fileno())
+                  identity=lambda item:(item.st_dev,item.st_ino,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
+                  need(identity(before)==identity(held)==identity(after) and len(raw)<=4096)
+                  return json.loads(raw)
+              proof=observed('private-authority-disposal.json')
+              expected={'status':'PRIVATE_CONTROL_TOKEN_REVOKED_AND_LOCAL_INPUTS_REMOVED',
+                  'control_commit':os.environ['CPU_CONTROL_COMMIT'],'registry_sha256':os.environ['CPU_SOURCE_REGISTRY_SHA256'],
+                  'scope_id':os.environ['CPU_SCOPE_ID'],'execution_commit':os.environ['GITHUB_SHA'],
+                  'run_id':os.environ['GITHUB_RUN_ID'],'attempt':1}
+              need(proof==expected)
+              if os.environ['CPU_UNATTENDED_POLICY_VERSION'] not in ('CPU_ROOT_CONTEXT_DIAGNOSTIC_V2','CPU_GPU_HOST_TECHNICAL_ADMISSION_V1'):
+                  return True
+              value=observed('private-http401-disposal.json');rows=value['observations']
+              marker=root/'controller-start.json';need(not marker.is_symlink() and marker.stat().st_uid==0)
+              driver=json.loads(marker.read_bytes())['pid']
+              need(value['status']=='CPU_CONTROL_TOKEN_HTTP401_VERIFIED_V1' and value['credential_included']is False
+                  and value['delete_requests']==0 and type(value['observer_pid'])is int and value['observer_pid']>0
+                  and value['observer_ppid']==driver and value['observer_pid']!=driver
+                  and 0<=value['wall_seconds']<20 and isinstance(rows,list) and 1<=len(rows)<=3
+                  and all(row['attempt']==i+1 and row['http_status']==(401 if i==len(rows)-1 else 200)
+                      and row['response_bytes']==0 for i,row in enumerate(rows)))
+              return True
+          def stage_guard_credentials(recipe,role,root):
+              values={key:os.environ.pop(env,'').strip() for key,env in [('seed','GPU_GUARD_AUTH_SEED'),
+                  ('deploy','GPU_GUARD_DEPLOY_TOKEN'),('provider','GPU_GUARD_PROVIDER_KEY')]}
+              if 'external_alarm_guard' not in recipe:return
+              policy=recipe.get('external_guard_handoff',{})
+              need(role in ('controller','watchdog') and policy.get('version')=='PROTECTED_GPU_GUARD_HANDOFF_V1'
+                  and policy.get('seed_secret')=='GPU_GUARD_AUTH_SEED'
+                  and policy.get('deploy_secret')=='CLOUDFLARE_WATCHDOG_DEPLOY_TOKEN'
+                  and policy.get('provider_secret')=='VAST_WATCHDOG_API_KEY')
+              if not re.fullmatch('[a-f0-9]{64}',values['seed']):
+                  print('{"status":"GPU_GUARD_SEED_MISSING_OR_INVALID","secret_name":"GPU_GUARD_AUTH_SEED","paid_provisioning_authorized":false}')
+              need(re.fullmatch('[a-f0-9]{64}',values['seed']))
+              names={'seed':'gpu-guard-seed.key','deploy':'gpu-guard-deploy.key','provider':'gpu-guard-provider.key'}
+              selected=('seed','deploy','provider') if role=='controller' else ('seed',)
+              need(all(0<len(values[name].encode())<=16384 and '\n' not in values[name] and '\r' not in values[name] for name in selected))
+              need(role=='controller' or not values['deploy'] and not values['provider'])
+              for name in selected:
+                  fd=os.open(root/names[name],os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o400)
+                  with os.fdopen(fd,'wb') as out:out.write(values[name].encode());out.flush();os.fsync(out.fileno())
+              values.clear()
           def request(method,path,credential,body=None,raw=False):
               conn=http.client.HTTPSConnection('api.github.com',timeout=5,context=ssl.create_default_context())
               try:
@@ -262,6 +330,7 @@ jobs:
                   'bot_user_id':int(os.environ['CPU_APP_BOT_ID']),'review_issue':issue,'reviewer_id':reviewer,
                   'drive_folder_id':os.environ['CPU_DRIVE_FOLDER_ID'],'drive_permissions_sha256':os.environ['CPU_EVIDENCE_PERMISSIONS_SHA256'],
                   'private_credential_root':str(private),'app_key':str(key),'bootstrap_token_file':str(fetch_token)}
+              stage_guard_credentials(recipe if gpu_packet is not None else {},role if gpu_packet is not None else 'none',root)
               if gpu_packet is not None:
                   packet_path=root/'gpu-host-packet.json';packet_path.write_bytes(packet_raw);packet_path.chmod(0o400)
                   secret=os.environ.pop('GPU_HOST_ROLE_KEY','')
@@ -287,6 +356,8 @@ jobs:
                   if not (root/'controller-start.json').exists():need(time.monotonic()-started<220)
                   time.sleep(.05)
               code=child.returncode
+              try:final_app_verified=final_token_observation(root)
+              except Exception:code=2
           except BaseException:
               if child is not None and child.poll() is None:
                   child.terminate()
@@ -311,29 +382,43 @@ jobs:
                   try:need(not root.is_symlink() and (root.stat().st_dev,root.stat().st_ino)==root_identity)
                   except Exception:code=2;root=None
               if root_identity is not None and root and root.exists():
-                  for name in ['app.pem','fetch-token','account.json','askpass.py','vast-controller.key','vast-watchdog.key','lifecycle-installation.json','gpu-ssh.key']:
+                  for name in ['app.pem','fetch-token','account.json','askpass.py','vast-controller.key','vast-watchdog.key','lifecycle-installation.json','gpu-ssh.key','gpu-guard-seed.key','gpu-guard-deploy.key','gpu-guard-provider.key']:
                       try:(root/name).unlink(missing_ok=True)
                       except Exception:code=2
                   snapshot=root/'precreation-worker'
                   if snapshot.exists():
                       try:need(not snapshot.is_symlink() and shutil.rmtree.avoids_symlink_attacks);shutil.rmtree(snapshot)
                       except Exception:code=2
-              os.environ.pop('CPU_APP_PRIVATE_KEY',None);os.environ.pop('CPU_DRIVE_RCLONE_CONF',None);os.environ.pop('GPU_HOST_ROLE_KEY',None);os.environ.pop('GPU_SSH_PRIVATE_KEY',None)
+              os.environ.pop('CPU_APP_PRIVATE_KEY',None);os.environ.pop('CPU_DRIVE_RCLONE_CONF',None);os.environ.pop('GPU_HOST_ROLE_KEY',None);os.environ.pop('GPU_SSH_PRIVATE_KEY',None);os.environ.pop('GPU_GUARD_AUTH_SEED',None);os.environ.pop('GPU_GUARD_DEPLOY_TOKEN',None);os.environ.pop('GPU_GUARD_PROVIDER_KEY',None)
               token=None
               # A separate process checks actual local absence after disposal.
               # It emits only a fixed status, never paths, identities or bytes.
               if root_identity is not None and root is not None and private_identity is not None:
-                  check="import json,sys;from pathlib import Path;root=Path(sys.argv[1]);private=Path(sys.argv[2]);paths=[root/n for n in ['app.pem','fetch-token','account.json','askpass.py','vast-controller.key','vast-watchdog.key','lifecycle-installation.json','gpu-ssh.key','precreation-worker']]+[private];p=root/'snapshot-path.json';paths+=([Path(json.loads(p.read_text())['path'])/'private-evidence-worker'] if p.exists() else []);sys.exit(0 if all(not p.exists() and not p.is_symlink() for p in paths) else 2)"
+                  check="import json,sys;from pathlib import Path;root=Path(sys.argv[1]);private=Path(sys.argv[2]);paths=[root/n for n in ['app.pem','fetch-token','account.json','askpass.py','vast-controller.key','vast-watchdog.key','lifecycle-installation.json','gpu-ssh.key','gpu-guard-seed.key','gpu-guard-deploy.key','gpu-guard-provider.key','precreation-worker']]+[private];p=root/'snapshot-path.json';paths+=([Path(json.loads(p.read_text())['path'])/'private-evidence-worker'] if p.exists() else []);sys.exit(0 if all(not p.exists() and not p.is_symlink() for p in paths) else 2)"
                   try:
                       observed=subprocess.run(['/usr/bin/python3','-I','-S','-B','-c',check,str(root),str(private)],
                           env={'PATH':'/usr/bin:/bin','LANG':'C.UTF-8'},capture_output=True,
                           timeout=min(5,max(.001,7200-(time.monotonic()-started))))
-                      need(observed.returncode==0)
+                      need(observed.returncode==0);final_files_verified=True
                       print('{"status":"CPU_LOCAL_CREDENTIAL_DISPOSAL_COMPLETE","production_admission_granted":false,"gpu_work":0,"paid_provisioning_authorized":false}')
                   except Exception:code=2
               if code==0 and root is not None:
                   try:need(shutil.rmtree.avoids_symlink_attacks);shutil.rmtree(root)
                   except Exception:code=2
-              signal.setitimer(signal.ITIMER_REAL,0)
+              if root_identity is not None and root is not None and not final_app_verified:
+                  try:final_app_verified=final_token_observation(root)
+                  except Exception:pass
+              try:
+                  signal.setitimer(signal.ITIMER_REAL,max(.000001,min(5,started+7200-time.monotonic())))
+                  publish_disposal_projection()
+              except BaseException:code=2
+              finally:signal.setitimer(signal.ITIMER_REAL,0)
           raise SystemExit(code)
           PY
+      - name: "GPU disposal receipt app=${{ steps.connected.outputs.app_revoked || 'unverified' }} files=${{ steps.connected.outputs.files_disposed || 'unverified' }}"
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          ulimit -v 262144
+          ulimit -t 1
+          :
