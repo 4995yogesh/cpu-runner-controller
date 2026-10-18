@@ -312,7 +312,7 @@ jobs:
                       expected['qualification_card_review']={'policy_sha256':digest(recipe['qualification_card']),
                           'fresh_exec_policy_sha256':digest(recipe['qualification_exec']),
                           'root_handoff_policy_sha256':digest(recipe['qualification_handoff']),
-                          'maximum_before_verified_destruction_seconds':890,'maximum_complete_job_seconds':5880,
+                          'maximum_before_verified_destruction_seconds':890,'maximum_complete_job_seconds':6090,
                           'private_drive_policy_sha256':digest(recipe['qualification_drive']),
                           'persistent_private_retention':True,'requires_actual_measured_inputs':True,'new_paid_authority':False}
                   if 'qualification_compute'in recipe:
