@@ -90,8 +90,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          GPU_HOST_ROLE_KEY: ${{ secrets[format('VAST_{0}_API_KEY', inputs.gpu_role)] }}
-          GPU_GUARD_AUTH_SEED: ${{ secrets.GPU_GUARD_AUTH_SEED }}
+          GPU_HOST_ROLE_KEY: ${{ inputs.gpu_role != 'NONE' && secrets[format('VAST_{0}_API_KEY', inputs.gpu_role)] || '' }}
+          GPU_GUARD_AUTH_SEED: ${{ inputs.gpu_role != 'NONE' && secrets.GPU_GUARD_AUTH_SEED || '' }}
           GPU_GUARD_DEPLOY_TOKEN: ${{ inputs.gpu_role == 'CONTROLLER' && secrets.CLOUDFLARE_WATCHDOG_DEPLOY_TOKEN || '' }}
           GPU_GUARD_PROVIDER_KEY: ${{ inputs.gpu_role == 'CONTROLLER' && secrets.VAST_WATCHDOG_API_KEY || '' }}
           GPU_SSH_PRIVATE_KEY: ${{ inputs.gpu_role == 'CONTROLLER' && secrets.GPU_SSH_PRIVATE_KEY || '' }}
