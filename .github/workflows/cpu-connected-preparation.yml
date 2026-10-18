@@ -31,6 +31,7 @@ on:
           - CPU_UNATTENDED_FULL_PREPARATION_V1
           - CPU_ROOT_CONTEXT_DIAGNOSTIC_V2
           - CPU_GPU_HOST_TECHNICAL_ADMISSION_V1
+          - CPU_STARTUP_AUTHORITY_DIAGNOSTIC_V1
       gpu_role:
         description: NONE for CPU; exact separate lifecycle role otherwise
         required: true
@@ -64,7 +65,7 @@ jobs:
     name: connected-cpu
     if: ${{ inputs.dispatch_authorized && github.run_attempt == 1 }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: ${{ inputs.reviewed_unattended_policy_version == 'CPU_STARTUP_AUTHORITY_DIAGNOSTIC_V1' && 12 || 120 }}
     env:
       GPU_HOST_ROLE: ${{ inputs.gpu_role }}
       GPU_HOST_PACKET_COMMIT: ${{ inputs.reviewed_gpu_packet_commit }}
@@ -147,7 +148,7 @@ jobs:
                   'scope_id':os.environ['CPU_SCOPE_ID'],'execution_commit':os.environ['GITHUB_SHA'],
                   'run_id':os.environ['GITHUB_RUN_ID'],'attempt':1}
               need(proof==expected)
-              if os.environ['CPU_UNATTENDED_POLICY_VERSION'] not in ('CPU_ROOT_CONTEXT_DIAGNOSTIC_V2','CPU_GPU_HOST_TECHNICAL_ADMISSION_V1'):
+              if os.environ['CPU_UNATTENDED_POLICY_VERSION'] not in ('CPU_ROOT_CONTEXT_DIAGNOSTIC_V2','CPU_GPU_HOST_TECHNICAL_ADMISSION_V1','CPU_STARTUP_AUTHORITY_DIAGNOSTIC_V1'):
                   return True
               value=observed('private-http401-disposal.json');rows=value['observations']
               marker=root/'controller-start.json';need(not marker.is_symlink() and marker.stat().st_uid==0)
@@ -245,7 +246,8 @@ jobs:
               need(run['status']=='in_progress')
               policies={'CPU_UNATTENDED_FULL_PREPARATION_V1':'CPU_PUBLIC_RUNNER_FULL_PREPARATION_INITIAL_V1',
                   'CPU_ROOT_CONTEXT_DIAGNOSTIC_V2':'CPU_PUBLIC_RUNNER_ROOT_CONTEXT_INITIAL_V2',
-                  'CPU_GPU_HOST_TECHNICAL_ADMISSION_V1':'GPU_CREATION_ARMING_INITIAL_V1'}
+                  'CPU_GPU_HOST_TECHNICAL_ADMISSION_V1':'GPU_CREATION_ARMING_INITIAL_V1',
+                  'CPU_STARTUP_AUTHORITY_DIAGNOSTIC_V1':'CPU_STARTUP_AUTHORITY_INITIAL_V1'}
               version=os.environ['CPU_UNATTENDED_POLICY_VERSION'];need(version in policies)
               prefix=policies[version]
               expected={'execution_repository':'4995yogesh/cpu-runner-controller','execution_commit':os.environ['GITHUB_SHA'],
