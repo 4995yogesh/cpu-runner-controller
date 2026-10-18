@@ -308,6 +308,19 @@ jobs:
                       expected['guest_preparation_review']={'plan_sha256':digest(preparation),'maximum_guest_seconds':preparation['total_guest_stage_seconds'],
                           'maximum_session_seconds':900,'maximum_job_seconds':7200,'shutdown_reserve_seconds':75,
                           'credential_forwarding':False,'qualification_admitted':False,'additional_paid_authority':False}
+                  if 'qualification_card'in recipe:
+                      expected['qualification_card_review']={'policy_sha256':digest(recipe['qualification_card']),
+                          'fresh_exec_policy_sha256':digest(recipe['qualification_exec']),
+                          'root_handoff_policy_sha256':digest(recipe['qualification_handoff']),
+                          'maximum_before_verified_destruction_seconds':890,'maximum_complete_job_seconds':5880,
+                          'private_drive_policy_sha256':digest(recipe['qualification_drive']),
+                          'persistent_private_retention':True,'requires_actual_measured_inputs':True,'new_paid_authority':False}
+                  if 'qualification_compute'in recipe:
+                      qualify=recipe['qualification_compute']
+                      expected['qualification_compute_review']={'policy_sha256':digest(qualify),'stage_seconds':100,
+                          'samples':8,'optimizer_updates':0,'precision':'float32','initial_microbatch_size':1,
+                          'qualification_success_requires_off_instance_lifecycle':True,'new_paid_authority':False,
+                          'fresh_attach_policy_sha256':digest(recipe['qualification_attach'])}
                   if 'guest_observation'in recipe:
                       observation=recipe['guest_observation']
                       expected['guest_runtime_observation_review']={'policy_sha256':digest(observation),'stage_seconds':60,
