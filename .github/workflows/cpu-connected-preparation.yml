@@ -305,9 +305,16 @@ jobs:
                           'file_cap_bytes':536870912,'interpreter_execution':False,'runtime_admission_granted':False}
                   if 'guest_transfer'in recipe:
                       preparation=recipe['guest_transfer']
-                      expected['guest_preparation_review']={'plan_sha256':digest(preparation),'maximum_guest_seconds':335,
+                      expected['guest_preparation_review']={'plan_sha256':digest(preparation),'maximum_guest_seconds':preparation['total_guest_stage_seconds'],
                           'maximum_session_seconds':900,'maximum_job_seconds':7200,'shutdown_reserve_seconds':75,
                           'credential_forwarding':False,'qualification_admitted':False,'additional_paid_authority':False}
+                  if 'guest_observation'in recipe:
+                      observation=recipe['guest_observation']
+                      expected['guest_runtime_observation_review']={'policy_sha256':digest(observation),'stage_seconds':60,
+                          'model_loading':True,'model_forwards':0,'optimizer_updates':0,'qualification_admitted':False,
+                          'root_cpu_seconds':30,'model_worker_file_cap_bytes':536870912,'new_paid_authority':False}
+                      expected['model_runtime_layout_review']={'policy_sha256':digest(recipe['model_runtime_layout']),
+                          'setup_execution':False,'pip_execution':False,'runtime_admission_granted':False}
               else:
                   need(role=='none' and not os.environ.get('GPU_HOST_PACKET_COMMIT') and not os.environ.get('GPU_HOST_PACKET_SHA256'))
                   need(not os.environ.pop('GPU_HOST_ROLE_KEY',''))
