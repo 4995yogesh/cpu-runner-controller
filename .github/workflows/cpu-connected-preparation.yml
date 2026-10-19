@@ -33,7 +33,7 @@ on:
           - CPU_GPU_HOST_TECHNICAL_ADMISSION_V1
           - CPU_STARTUP_AUTHORITY_DIAGNOSTIC_V1
       gpu_role:
-        description: NONE for CPU; exact separate lifecycle role otherwise
+        description: NONE for CPU preparation; PRECREATION for CPU-only static diagnostic; lifecycle roles separately authorized
         required: true
         type: choice
         default: NONE
@@ -41,6 +41,7 @@ on:
           - NONE
           - CONTROLLER
           - WATCHDOG
+          - PRECREATION
       reviewed_gpu_packet_commit:
         description: Private review commit containing this technical scope packet
         required: false
@@ -58,7 +59,7 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: cpu-connected-${{ inputs.gpu_role == 'NONE' && 'preparation' || inputs.gpu_role }}
+  group: cpu-connected-${{ inputs.gpu_role == 'NONE' && 'preparation' || inputs.gpu_role == 'PRECREATION' && 'CONTROLLER' || inputs.gpu_role }}
   cancel-in-progress: false
 jobs:
   connected-cpu:
@@ -67,7 +68,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.reviewed_unattended_policy_version == 'CPU_STARTUP_AUTHORITY_DIAGNOSTIC_V1' && 12 || 120 }}
     env:
-      GPU_HOST_ROLE: ${{ inputs.gpu_role }}
+      GPU_HOST_ROLE: ${{ inputs.gpu_role == 'PRECREATION' && 'CONTROLLER' || inputs.gpu_role }}
       GPU_HOST_PACKET_COMMIT: ${{ inputs.reviewed_gpu_packet_commit }}
       GPU_HOST_PACKET_SHA256: ${{ inputs.reviewed_gpu_packet_sha256 }}
       CPU_CONTROL_COMMIT: ${{ inputs.reviewed_control_commit }}
@@ -90,16 +91,17 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          GPU_HOST_ROLE_KEY: ${{ inputs.gpu_role != 'NONE' && secrets[format('VAST_{0}_API_KEY', inputs.gpu_role)] || '' }}
-          GPU_GUARD_AUTH_SEED: ${{ inputs.gpu_role != 'NONE' && secrets.GPU_GUARD_AUTH_SEED || '' }}
-          GPU_GUARD_DEPLOY_TOKEN: ${{ inputs.gpu_role == 'CONTROLLER' && secrets.CLOUDFLARE_WATCHDOG_DEPLOY_TOKEN || '' }}
-          GPU_GUARD_PROVIDER_KEY: ${{ inputs.gpu_role == 'CONTROLLER' && secrets.VAST_WATCHDOG_API_KEY || '' }}
-          GPU_SSH_PRIVATE_KEY: ${{ inputs.gpu_role == 'CONTROLLER' && secrets.GPU_SSH_PRIVATE_KEY || '' }}
+          CPU_PRECREATION_DIAGNOSTIC: ${{ inputs.gpu_role == 'PRECREATION' && 'true' || 'false' }}
+          GPU_HOST_ROLE_KEY: ${{ inputs.gpu_role != 'PRECREATION' && inputs.gpu_role != 'NONE' && secrets[format('VAST_{0}_API_KEY', inputs.gpu_role)] || '' }}
+          GPU_GUARD_AUTH_SEED: ${{ inputs.gpu_role != 'PRECREATION' && inputs.gpu_role != 'NONE' && secrets.GPU_GUARD_AUTH_SEED || '' }}
+          GPU_GUARD_DEPLOY_TOKEN: ${{ inputs.gpu_role != 'PRECREATION' && inputs.gpu_role == 'CONTROLLER' && secrets.CLOUDFLARE_WATCHDOG_DEPLOY_TOKEN || '' }}
+          GPU_GUARD_PROVIDER_KEY: ${{ inputs.gpu_role != 'PRECREATION' && inputs.gpu_role == 'CONTROLLER' && secrets.VAST_WATCHDOG_API_KEY || '' }}
+          GPU_SSH_PRIVATE_KEY: ${{ (inputs.gpu_role == 'CONTROLLER' || inputs.gpu_role == 'PRECREATION') && secrets.GPU_SSH_PRIVATE_KEY || '' }}
           CPU_APP_PRIVATE_KEY: ${{ secrets.CPU_APP_PRIVATE_KEY }}
           CPU_DRIVE_RCLONE_CONF: ${{ secrets.CPU_DRIVE_RCLONE_CONF }}
         run: |
           set -euo pipefail
-          sudo --preserve-env=GITHUB_OUTPUT,GPU_GUARD_AUTH_SEED,GPU_GUARD_DEPLOY_TOKEN,GPU_GUARD_PROVIDER_KEY,GPU_SSH_PRIVATE_KEY,GPU_HOST_ROLE,GPU_HOST_PACKET_COMMIT,GPU_HOST_PACKET_SHA256,GPU_HOST_ROLE_KEY,GITHUB_ACTOR_ID,GH_TOKEN,CPU_APP_PRIVATE_KEY,CPU_DRIVE_RCLONE_CONF,CPU_CONTROL_COMMIT,CPU_SOURCE_REGISTRY_SHA256,CPU_SCOPE_ID,CPU_CARD_SHA256,CPU_UNATTENDED_POLICY_SHA256,CPU_UNATTENDED_POLICY_VERSION,CPU_APP_CLIENT_ID,CPU_APP_INSTALLATION_ID,CPU_PRIVATE_REPOSITORY_ID,CPU_APP_BOT_ID,CPU_REVIEW_ISSUE_NUMBER,CPU_REVIEWER_ID,CPU_DRIVE_FOLDER_ID,CPU_EVIDENCE_PERMISSIONS_SHA256,GITHUB_REPOSITORY,GITHUB_EVENT_NAME,GITHUB_RUN_ATTEMPT,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,RUNNER_OS,ImageOS,RUNNER_NAME,GITHUB_JOB,ImageVersion,RUNNER_TEMP /usr/bin/python3 -I -S -B - <<'PY'
+          sudo --preserve-env=CPU_PRECREATION_DIAGNOSTIC,GITHUB_OUTPUT,GPU_GUARD_AUTH_SEED,GPU_GUARD_DEPLOY_TOKEN,GPU_GUARD_PROVIDER_KEY,GPU_SSH_PRIVATE_KEY,GPU_HOST_ROLE,GPU_HOST_PACKET_COMMIT,GPU_HOST_PACKET_SHA256,GPU_HOST_ROLE_KEY,GITHUB_ACTOR_ID,GH_TOKEN,CPU_APP_PRIVATE_KEY,CPU_DRIVE_RCLONE_CONF,CPU_CONTROL_COMMIT,CPU_SOURCE_REGISTRY_SHA256,CPU_SCOPE_ID,CPU_CARD_SHA256,CPU_UNATTENDED_POLICY_SHA256,CPU_UNATTENDED_POLICY_VERSION,CPU_APP_CLIENT_ID,CPU_APP_INSTALLATION_ID,CPU_PRIVATE_REPOSITORY_ID,CPU_APP_BOT_ID,CPU_REVIEW_ISSUE_NUMBER,CPU_REVIEWER_ID,CPU_DRIVE_FOLDER_ID,CPU_EVIDENCE_PERMISSIONS_SHA256,GITHUB_REPOSITORY,GITHUB_EVENT_NAME,GITHUB_RUN_ATTEMPT,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,RUNNER_OS,ImageOS,RUNNER_NAME,GITHUB_JOB,ImageVersion,RUNNER_TEMP /usr/bin/python3 -I -S -B - <<'PY'
           import base64,datetime,hashlib,http.client,json,os,re,resource,shutil,signal,ssl,stat,subprocess,time,uuid
           from pathlib import Path
           started=time.monotonic();root=None;private=None;token=None;child=None;code=2
@@ -287,10 +289,14 @@ jobs:
                        and recipe['native_private_control']['registry_sha256']==os.environ['CPU_SOURCE_REGISTRY_SHA256']
                        and recipe['hosted_watchdog']['execution_commit']==os.environ['GITHUB_SHA']
                        and recipe['hosted_cpu_admission']['cards_sha256'][role]==os.environ['CPU_CARD_SHA256'])
-                  cap=recipe['session_cap_inr'];need(type(cap) in (int,float) and 0<cap<=500)
+                  diagnostic=os.environ['CPU_PRECREATION_DIAGNOSTIC']=='true'
+                  need(diagnostic==('cpu_precreation_diagnostic' in recipe))
+                  cap=recipe['session_cap_inr']
+                  need((type(cap)is int and cap==0 and role=='controller' and recipe['operation']=='cpu-precreation-diagnostic-v1') if diagnostic else (type(cap)in(int,float) and 0<cap<=500))
                   expected={'approved':True,'recipe_sha256':digest(recipe),
                       'operation_authority_sha256':recipe['hosted_watchdog']['operation_authority_sha256'],
                       'scope_id':scope,'attempt':1,'paid_spend_ceiling_inr':cap,'test_evidence':False}
+                  if diagnostic:expected['cpu_only_precreation_review']=recipe['cpu_precreation_diagnostic']
                   if 'guest_runtime_materialization' in recipe:
                       preparation=recipe['guest_runtime_materialization']
                       need(recipe.get('guest_runtime_materialization_authorized') is True
@@ -371,14 +377,21 @@ jobs:
                   'bot_user_id':int(os.environ['CPU_APP_BOT_ID']),'review_issue':issue,'reviewer_id':reviewer,
                   'drive_folder_id':os.environ['CPU_DRIVE_FOLDER_ID'],'drive_permissions_sha256':os.environ['CPU_EVIDENCE_PERMISSIONS_SHA256'],
                   'private_credential_root':str(private),'app_key':str(key),'bootstrap_token_file':str(fetch_token)}
-              stage_guard_credentials(recipe if gpu_packet is not None else {},role if gpu_packet is not None else 'none',root)
+              diagnostic=gpu_packet is not None and 'cpu_precreation_diagnostic' in recipe
+              need((os.environ['CPU_PRECREATION_DIAGNOSTIC']=='true')==diagnostic)
+              if not diagnostic:stage_guard_credentials(recipe if gpu_packet is not None else {},role if gpu_packet is not None else 'none',root)
+              if diagnostic:account['cpu_precreation_diagnostic']=True
               if gpu_packet is not None:
                   packet_path=root/'gpu-host-packet.json';packet_path.write_bytes(packet_raw);packet_path.chmod(0o400)
                   secret=os.environ.pop('GPU_HOST_ROLE_KEY','')
-                  need(isinstance(secret,str) and 0<len(secret.encode())<=16384 and '\n' not in secret and '\r' not in secret)
                   role_key=root/('vast-'+role+'.key')
-                  fd=os.open(role_key,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o400)
-                  with os.fdopen(fd,'wb') as out:out.write(secret.encode());out.flush();os.fsync(out.fileno())
+                  if diagnostic:
+                      need(secret=='')
+                      need(all(os.environ.pop(name,'')=='' for name in ('GPU_GUARD_AUTH_SEED','GPU_GUARD_DEPLOY_TOKEN','GPU_GUARD_PROVIDER_KEY')))
+                  else:
+                      need(isinstance(secret,str) and 0<len(secret.encode())<=16384 and '\n' not in secret and '\r' not in secret)
+                      fd=os.open(role_key,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o400)
+                      with os.fdopen(fd,'wb') as out:out.write(secret.encode());out.flush();os.fsync(out.fileno())
                   secret=None
                   ssh_secret=os.environ.pop('GPU_SSH_PRIVATE_KEY','')
                   if role=='controller' and 'precreation_pipeline' in recipe:
