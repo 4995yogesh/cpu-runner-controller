@@ -396,6 +396,7 @@ jobs:
                   ssh_secret=os.environ.pop('GPU_SSH_PRIVATE_KEY','')
                   if role=='controller' and 'precreation_pipeline' in recipe:
                       if not ssh_secret:print('{"status":"GPU_SSH_IDENTITY_MISSING","secret_name":"GPU_SSH_PRIVATE_KEY","paid_provisioning_authorized":false}')
+                      if ssh_secret and not ssh_secret.endswith('\n'):ssh_secret+='\n'
                       need(0<len(ssh_secret.encode())<=16384)
                       fd=os.open(root/'gpu-ssh.key',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o400)
                       with os.fdopen(fd,'wb') as out:out.write(ssh_secret.encode());out.flush();os.fsync(out.fileno())
